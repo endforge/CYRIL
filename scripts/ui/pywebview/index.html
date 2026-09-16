@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>CYRIL</title>
+</head>
+
+<body>
+
+    <main>
+        <h1>CYRIL</h1>
+
+        <section>
+            <h2>Sources</h2>
+
+            <p id="source-status">
+                Loading Sources...
+            </p>
+
+            <div id="source-list"></div>
+        </section>
+
+
+        <section>
+            <h2>Source Containers</h2>
+
+            <p id="container-status">
+                Select a Source.
+            </p>
+
+            <div id="container-tree"></div>
+        </section>
+
+
+        <section>
+            <h2>Selected Synchronization Scope</h2>
+
+            <p id="selection-status">
+                No Source Container selected.
+            </p>
+
+            <button
+                id="synchronize-button"
+                type="button"
+                disabled
+            >
+                Synchronize
+            </button>
+        </section>
+
+
+        <section>
+            <h2>Synchronization Status</h2>
+
+            <p id="synchronization-status">
+                No synchronization requested.
+            </p>
+        </section>
+    </main>
+
+
+    <script>
+        let selectedSource = null;
+        let selectedContainer = null;
+        let synchronizationRunning = false;
+
+
+        // ----------------------------------------------------
+        // Source Loading
+        // ----------------------------------------------------
+
+        async function loadSources() {
+            const statusElement =
+                document.getElementById("source-status");
+
+            const sourceListElement =
+                document.getElementById("source-list");
+
+            try {
+                const sources =
+                    await window.pywebview.api.list_sources();
+
+                sourceListElement.innerHTML = "";
+
+                for (const source of sources) {
+                    const button =
+                        document.createElement("button");
+
+                    button.type = "button";
+                    button.textContent = source.name;
+
+                    button.addEventListener(
+                        "click",
+                        () => browseSource(source)
+                    );
+
+                    sourceListElement.appendChild(button);
+                }
+
+                statusElement.textContent =
+                    `Enabled Sources: ${sources.length}`;
+            }
+            catch (error) {
+                console.error(
+                    "Unable to load Sources.",
+                    error
+                );
+
+                statusElement.textContent =
+                    "Unable to load Sources.";
+            }
+        }
+
+
+        // ----------------------------------------------------
+        // Source Browsing
+        // ----------------------------------------------------
+
+        async function browseSource(source) {
+            const statusElement =
+                document.getElementById("container-status");
+
+            const treeElement =
+                document.getElementById("container-tree");
+
+            selectedSource = source;
+
+            clearSelection();
+
+            statusElement.textContent =
+                `Loading ${source.name}...`;
+
+            treeElement.innerHTML = "";
+
+            try {
+                const result =
+                    await window.pywebview.api.browse_source(
+                        source.source_id
+                    );
+
+                renderSourceTree(
+                    result,
+                    treeElement
+                );
+
+                statusElement.textContent =
+                    `${source.name} loaded.`;
+            }
+            catch (error) {
+                console.error(
+                    "Unable to browse Source.",
+                    error
+                );
+
+                statusElement.textContent =
+                    `Unable to load ${source.name}.`;
+            }
+        }
+
+
+        // ----------------------------------------------------
+        // Tree Rendering
+        // ----------------------------------------------------
+
+        function renderSourceTree(
+            result,
+            container
+        ) {
+            if (
+                !result ||
+                !Array.isArray(result.roots)
+            ) {
+                container.textContent =
+                    "No Source Containers returned.";
+
+                return;
+            }
+
+            const tree =
+                document.createElement("ul");
+
+            for (const root of result.roots) {
+                tree.appendChild(
+                    createContainerNode(
+                        root,
+                        true
+                    )
+                );
+            }
+
+            container.appendChild(tree);
+        }
+
+
+        function createContainerNode(
+            node,
+            isRoot = false
+        ) {
+            const item =
+                document.createElement("li");
+
+            const row =
+                document.createElement("div");
+
+            const hasChildren =
+                Array.isArray(node.children) &&
+                node.children.length > 0;
+
+            let childList = null;
+
+
+            // ------------------------------------------------
+            // Expand / Collapse
+            // ------------------------------------------------
+
+            if (hasChildren) {
+                const toggleButton =
+                    document.createElement("button");
+
+                toggleButton.type = "button";
+
+                toggleButton.textContent =
+                    isRoot ? "▼" : "▶";
+
+                toggleButton.setAttribute(
+                    "aria-label",
+                    `Toggle ${node.name}`
+                );
+
+                row.appendChild(toggleButton);
+
+
+                childList =
+                    document.createElement("ul");
+
+                childList.hidden =
+                    !isRoot;
+
+                for (const child of node.children) {
+                    childList.appendChild(
+                        createContainerNode(
+                            child,
+                            false
+                        )
+                    );
+                }
+
+                toggleButton.addEventListener(
+                    "click",
+                    () => {
+                        childList.hidden =
+                            !childList.hidden;
+
+                        toggleButton.textContent =
+                            childList.hidden
+                                ? "▶"
+                                : "▼";
+                    }
+                );
+            }
+            else {
+                const spacer =
+                    document.createElement("span");
+
+                spacer.textContent = "  ";
+
+                row.appendChild(spacer);
+            }
+
+
+            // ------------------------------------------------
+            // Container Selection
+            // ------------------------------------------------
+
+            if (node.selectable === true) {
+                const selectButton =
+                    document.createElement("button");
+
+                selectButton.type = "button";
+                selectButton.textContent = node.name;
+
+                selectButton.addEventListener(
+                    "click",
+                    () => selectContainer(node)
+                );
+
+                row.appendChild(selectButton);
+            }
+            else {
+                const label =
+                    document.createElement("span");
+
+                label.textContent = node.name;
+
+                row.appendChild(label);
+            }
+
+
+            item.appendChild(row);
+
+            if (childList !== null) {
+                item.appendChild(childList);
+            }
+
+            return item;
+        }
+
+
+        // ----------------------------------------------------
+        // Container Selection
+        // ----------------------------------------------------
+
+        function selectContainer(container) {
+            selectedContainer = container;
+
+            const statusElement =
+                document.getElementById("selection-status");
+
+            statusElement.textContent =
+                `${selectedSource.name} | ${container.name}`;
+
+            updateSynchronizeButton();
+        }
+
+
+        function clearSelection() {
+            selectedContainer = null;
+
+            const statusElement =
+                document.getElementById("selection-status");
+
+            statusElement.textContent =
+                "No Source Container selected.";
+
+            updateSynchronizeButton();
+        }
+
+
+        function updateSynchronizeButton() {
+            const button =
+                document.getElementById(
+                    "synchronize-button"
+                );
+
+            button.disabled =
+                synchronizationRunning ||
+                selectedSource === null ||
+                selectedContainer === null;
+        }
+
+
+        // ----------------------------------------------------
+        // Synchronization
+        // ----------------------------------------------------
+
+        async function synchronizeSelectedContainer() {
+            if (
+                selectedSource === null ||
+                selectedContainer === null ||
+                synchronizationRunning
+            ) {
+                return;
+            }
+
+            const statusElement =
+                document.getElementById(
+                    "synchronization-status"
+                );
+
+            synchronizationRunning = true;
+
+            updateSynchronizeButton();
+
+            statusElement.textContent =
+                `Synchronizing ${selectedSource.name} | ` +
+                `${selectedContainer.name}...`;
+
+            try {
+                const result =
+                    await window.pywebview.api.synchronize(
+                        selectedSource.source_id,
+                        selectedContainer.source_container_id
+                    );
+
+                console.log(
+                    "Synchronization result:",
+                    result
+                );
+
+                statusElement.textContent =
+                    `Synchronization completed: ` +
+                    `${selectedSource.name} | ` +
+                    `${selectedContainer.name}`;
+            }
+            catch (error) {
+                console.error(
+                    "Synchronization failed.",
+                    error
+                );
+
+                statusElement.textContent =
+                    `Synchronization failed: ` +
+                    `${selectedSource.name} | ` +
+                    `${selectedContainer.name}`;
+            }
+            finally {
+                synchronizationRunning = false;
+
+                updateSynchronizeButton();
+            }
+        }
+
+
+        // ----------------------------------------------------
+        // Startup
+        // ----------------------------------------------------
+
+        document
+            .getElementById("synchronize-button")
+            .addEventListener(
+                "click",
+                synchronizeSelectedContainer
+            );
+
+
+        window.addEventListener(
+            "pywebviewready",
+            loadSources
+        );
+    </script>
+
+</body>
+
+</html>

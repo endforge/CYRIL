@@ -14,6 +14,8 @@ Responsibilities:
     - Validate the admitted synchronization scope against its Source of Truth.
     - Invoke authoritative synchronization reservation and execution.
     - Return one application-facing operational result.
+    - Expose synchronization identity, scope, and counts without exposing
+      internal synchronization pipeline objects.
 
 Does NOT:
     - Access the database directly.
@@ -22,6 +24,8 @@ Does NOT:
     - Create Processing Jobs or Synchronization Runs itself.
     - Implement Source-specific Connector behavior.
     - Duplicate synchronization pipeline logic.
+    - Expose Connector, Translator, Discovery, Extraction, or Load sections.
+    - Expose synchronization associations.
     - Perform UI presentation.
 """
 
@@ -101,6 +105,8 @@ class SynchronizationApplicationService:
             Source-of-Truth validation
                 ->
             Authoritative reservation and execution
+                ->
+            Application-facing operational result
         """
 
         if request is None:
@@ -346,10 +352,74 @@ class SynchronizationApplicationService:
             )
 
         # -------------------------------------------------
+        # Extract application-facing execution information
+        # -------------------------------------------------
+
+        processing_job_id = (
+            self._require_result_text(
+                execution_result,
+                "processing_job_id",
+            )
+        )
+
+        sync_run_id = (
+            self._require_result_text(
+                execution_result,
+                "sync_run_id",
+            )
+        )
+
+        pipeline_result = (
+            execution_result.get(
+                "result"
+            )
+        )
+
+        if not isinstance(
+            pipeline_result,
+            dict,
+        ):
+            raise RuntimeError(
+                "Synchronization execution result is "
+                "missing the pipeline result."
+            )
+
+        counts = (
+            pipeline_result.get(
+                "counts"
+            )
+        )
+
+        if not isinstance(
+            counts,
+            dict,
+        ):
+            raise RuntimeError(
+                "Synchronization pipeline result is "
+                "missing counts."
+            )
+
+        operational_counts = dict(
+            counts
+        )
+
+        # -------------------------------------------------
         # Application-facing operational result
+        #
+        # Internal synchronization sections and associations
+        # intentionally stop at this boundary.
         # -------------------------------------------------
 
         return {
+            "status":
+                "completed",
+
+            "processing_job_id":
+                processing_job_id,
+
+            "sync_run_id":
+                sync_run_id,
+
             "source_name":
                 source_name,
 
@@ -368,17 +438,8 @@ class SynchronizationApplicationService:
             "is_source_root":
                 is_source_root,
 
-            "admission":
-                admitted,
-
-            "preliminary_conflict":
-                conflict_result,
-
-            "source_validation":
-                source_validation,
-
-            "execution":
-                execution_result,
+            "counts":
+                operational_counts,
         }
 
     @staticmethod
@@ -401,7 +462,7 @@ class SynchronizationApplicationService:
             ).strip()
         ):
             raise RuntimeError(
-                "Synchronization admission result is "
+                "Synchronization result is "
                 f"missing {field_name}."
             )
 

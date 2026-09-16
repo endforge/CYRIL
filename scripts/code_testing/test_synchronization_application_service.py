@@ -16,6 +16,10 @@ Verifies:
     - Entire OneDrive is rejected through the normal application path.
     - Preliminary conflicts stop processing before Source validation.
     - Missing Source-of-Truth Containers stop processing before execution.
+    - Application-facing results expose synchronization identity and counts.
+    - Internal synchronization pipeline sections do not cross the
+      application boundary.
+    - Synchronization associations do not cross the application boundary.
 
 Does NOT:
     - Access Microsoft Graph.
@@ -207,6 +211,54 @@ class FakeExecutionService:
 
             "source_object_id":
                 source_object_id,
+
+            "result": {
+                "processing_job_id":
+                    "processing-job-1",
+
+                "connector_section":
+                    object(),
+
+                "translator_section":
+                    object(),
+
+                "discovery_section":
+                    object(),
+
+                "extraction_section":
+                    object(),
+
+                "load_section":
+                    object(),
+
+                "associations": (
+                    object(),
+                    object(),
+                ),
+
+                "counts": {
+                    "associations":
+                        7,
+
+                    "translated":
+                        7,
+
+                    "discovered":
+                        5,
+
+                    "extracted":
+                        3,
+
+                    "new":
+                        2,
+
+                    "modified":
+                        1,
+
+                    "unchanged":
+                        2,
+                },
+            },
         }
 
 
@@ -439,6 +491,91 @@ def test_entire_onenote():
     )
 
 
+def test_application_result_boundary():
+    (
+        service,
+        events,
+        validator,
+        execution,
+    ) = build_service(
+        source_name="OneDrive",
+        source_object_id="graph-folder-1",
+    )
+
+    request = FakeRequest(
+        source_id="source-1",
+        source_container_id="container-1",
+    )
+
+    result = service.execute(
+        request
+    )
+
+    assert result == {
+        "status":
+            "completed",
+
+        "processing_job_id":
+            "processing-job-1",
+
+        "sync_run_id":
+            "sync-run-1",
+
+        "source_name":
+            "OneDrive",
+
+        "source_id":
+            "source-1",
+
+        "source_container_id":
+            "container-1",
+
+        "source_object_id":
+            "graph-folder-1",
+
+        "container_name":
+            "Test Container",
+
+        "is_source_root":
+            False,
+
+        "counts": {
+            "associations":
+                7,
+
+            "translated":
+                7,
+
+            "discovered":
+                5,
+
+            "extracted":
+                3,
+
+            "new":
+                2,
+
+            "modified":
+                1,
+
+            "unchanged":
+                2,
+        },
+    }
+
+    assert "execution" not in result
+    assert "admission" not in result
+    assert "preliminary_conflict" not in result
+    assert "source_validation" not in result
+
+    assert "connector_section" not in result
+    assert "translator_section" not in result
+    assert "discovery_section" not in result
+    assert "extraction_section" not in result
+    assert "load_section" not in result
+    assert "associations" not in result
+
+
 def test_entire_onedrive_rejected():
     (
         service,
@@ -624,6 +761,10 @@ def main():
         (
             "Entire OneNote Source Root",
             test_entire_onenote,
+        ),
+        (
+            "Application Result Boundary",
+            test_application_result_boundary,
         ),
         (
             "Entire OneDrive Rejected",
