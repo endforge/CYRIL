@@ -158,6 +158,15 @@ from scripts.application.synchronization_interaction_service import (
 )
 
 
+from scripts.connectors.ms_graph.onedrive_container_enumerator import OneDriveContainerEnumerator
+from scripts.connectors.ms_graph.onenote_container_enumerator import OneNoteContainerEnumerator
+from scripts.sync.source_container_observation_validator import SourceContainerObservationValidator
+from scripts.sync.source_container_root_service import SourceContainerRootService
+from scripts.sync.source_container_reconciler import SourceContainerReconciler
+from scripts.sync.source_container_refresh_service import SourceContainerRefreshService
+from scripts.database.source_container_refresh_reservation_repository import SourceContainerRefreshReservationRepository
+
+
 def build_sync_runtime(pipeline_version):
     """
     Build and return the production UI-independent synchronization
@@ -392,6 +401,32 @@ def build_sync_runtime(pipeline_version):
     )
 
     # --------------------------------------------------------
+    # Complete Source Container Inventory Refresh
+    # --------------------------------------------------------
+
+    refresh_reservation_repository = SourceContainerRefreshReservationRepository(
+        database_client
+    )
+    refresh_services = {
+        name: SourceContainerRefreshService(
+            enumerator=enumerator_type(),
+            observation_validator=SourceContainerObservationValidator(),
+            source_container_root_service=SourceContainerRootService(),
+            source_container_repository=source_container_repository,
+            reconciler=SourceContainerReconciler(),
+            refresh_reservation_repository=refresh_reservation_repository,
+            processing_job_repository=processing_job_repository,
+            database_client=database_client,
+            process_type=SourceContainerRefreshStatusRepository.PROCESS_TYPE,
+            pipeline_version=pipeline_version,
+        )
+        for name, enumerator_type in (
+            ("onedrive", OneDriveContainerEnumerator),
+            ("onenote", OneNoteContainerEnumerator),
+        )
+    }
+
+    # --------------------------------------------------------
     # UI-Independent Interaction Boundary
     # --------------------------------------------------------
 
@@ -403,6 +438,7 @@ def build_sync_runtime(pipeline_version):
             synchronization_application_service=(
                 synchronization_application_service
             ),
+            source_container_refresh_services=refresh_services,
         )
     )
 

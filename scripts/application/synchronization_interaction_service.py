@@ -48,6 +48,7 @@ class SynchronizationInteractionService:
         *,
         source_browsing_service,
         synchronization_application_service,
+        source_container_refresh_services=None,
     ):
         """
         Initialize interaction dependencies.
@@ -70,6 +71,26 @@ class SynchronizationInteractionService:
         self._synchronization_application_service = (
             synchronization_application_service
         )
+
+        self._source_container_refresh_services = (
+            source_container_refresh_services or {}
+        )
+
+    def refresh_container_inventory(self, *, source_id, metadata=None):
+        """Refresh the complete inventory for one enabled Source."""
+        sources = self.list_sources()
+        source = next(
+            (item for item in sources
+             if str(item.get("source_id")) == str(source_id)),
+            None,
+        )
+        if source is None:
+            raise ValueError("Source is not enabled or does not exist.")
+        source_name = str(source.get("name", "")).strip().casefold()
+        service = self._source_container_refresh_services.get(source_name)
+        if service is None:
+            raise ValueError("Inventory refresh is not supported for this Source.")
+        return service.refresh(source_id=source_id, job_metadata=metadata)
 
     def list_sources(
         self,

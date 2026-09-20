@@ -121,6 +121,14 @@ class SynchronizationApi:
             result
         )
 
+    def refresh_container_inventory(self, source_id):
+        """Refresh one complete Source inventory through the application boundary."""
+        result = self._synchronization_interaction_service.refresh_container_inventory(
+            source_id=source_id,
+            metadata={"requested_by": "pywebview"},
+        )
+        return self._to_json_safe(result)
+
     @staticmethod
     def _to_json_safe(
         value,

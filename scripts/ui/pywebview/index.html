@@ -1,441 +1,268 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CYRIL</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+        section { border: 1px solid #aaa; border-radius: 8px; padding: 1.25rem; margin: 1rem 0; }
+        label { display: block; font-weight: 600; margin: .8rem 0 .3rem; }
+        select { width: 100%; max-width: 550px; padding: .5rem; }
+        button { margin: .25rem; padding: .4rem .7rem; cursor: pointer; }
+        button:disabled { cursor: not-allowed; }
+        .status { margin-top: .75rem; }
+        .note { font-size: .9rem; }
+        ul { list-style: none; padding-left: 1.3rem; }
+        li { margin: .2rem 0; }
+    </style>
 </head>
-
 <body>
+<main>
+    <h1>CYRIL</h1>
+    <p id="source-status" role="status">Loading sources...</p>
 
-    <main>
-        <h1>CYRIL</h1>
+    <section aria-labelledby="inventory-heading">
+        <h2 id="inventory-heading">Container Inventory</h2>
+        <label for="inventory-source">Source</label>
+        <select id="inventory-source" disabled><option value="">Select a source</option></select>
+        <h3>Choose inventory scope</h3>
+        <div id="inventory-tree"></div>
+        <p id="inventory-selection-status" class="status" role="status">No inventory scope selected.</p>
+        <p id="inventory-container-status" class="status" role="status">Select a source.</p>
+        <button id="refresh-inventory-button" type="button" disabled>Refresh Container Inventory</button>
+        <p id="inventory-status" class="status" role="status">No inventory refresh requested.</p>
+        <p id="inventory-scope-note" class="note" hidden>Individual-container inventory refresh is not supported by the current refresh API. Choose ALL to refresh the complete source.</p>
+    </section>
 
-        <section>
-            <h2>Sources</h2>
+    <section aria-labelledby="content-heading">
+        <h2 id="content-heading">Content Synchronization</h2>
+        <label for="content-source">Source</label>
+        <select id="content-source" disabled><option value="">Select a source</option></select>
+        <p id="container-status" class="status" role="status">Select a source.</p>
+        <h3>Choose synchronization scope</h3>
+        <div id="container-tree"></div>
+        <p id="selection-status" class="status" role="status">No Source Container selected.</p>
+        <button id="synchronize-button" type="button" disabled>Synchronize</button>
+        <p id="synchronization-status" class="status" role="status">No synchronization requested.</p>
+    </section>
+</main>
+<script>
+    const sourcesById = new Map();
+    let inventorySource = null;
+    let inventoryScope = null;
+    let contentSource = null;
+    let selectedContainer = null;
+    let inventoryRunning = false;
+    let synchronizationRunning = false;
+    let inventoryGeneration = 0;
+    let contentGeneration = 0;
 
-            <p id="source-status">
-                Loading Sources...
-            </p>
+    const element = id => document.getElementById(id);
 
-            <div id="source-list"></div>
-        </section>
+    function updateButtons() {
+        element('refresh-inventory-button').disabled =
+            inventoryRunning || synchronizationRunning || !inventorySource || inventoryScope !== 'ALL';
+        element('synchronize-button').disabled =
+            inventoryRunning || synchronizationRunning || !contentSource || !selectedContainer;
+        element('inventory-source').disabled = inventoryRunning || synchronizationRunning || sourcesById.size === 0;
+        element('content-source').disabled = inventoryRunning || synchronizationRunning || sourcesById.size === 0;
+    }
 
-
-        <section>
-            <h2>Source Containers</h2>
-
-            <p id="container-status">
-                Select a Source.
-            </p>
-
-            <div id="container-tree"></div>
-        </section>
-
-
-        <section>
-            <h2>Selected Synchronization Scope</h2>
-
-            <p id="selection-status">
-                No Source Container selected.
-            </p>
-
-            <button
-                id="synchronize-button"
-                type="button"
-                disabled
-            >
-                Synchronize
-            </button>
-        </section>
-
-
-        <section>
-            <h2>Synchronization Status</h2>
-
-            <p id="synchronization-status">
-                No synchronization requested.
-            </p>
-        </section>
-    </main>
-
-
-    <script>
-        let selectedSource = null;
-        let selectedContainer = null;
-        let synchronizationRunning = false;
-
-
-        // ----------------------------------------------------
-        // Source Loading
-        // ----------------------------------------------------
-
-        async function loadSources() {
-            const statusElement =
-                document.getElementById("source-status");
-
-            const sourceListElement =
-                document.getElementById("source-list");
-
-            try {
-                const sources =
-                    await window.pywebview.api.list_sources();
-
-                sourceListElement.innerHTML = "";
-
+    async function loadSources() {
+        try {
+            const sources = await window.pywebview.api.list_sources();
+            sourcesById.clear();
+            for (const id of ['inventory-source', 'content-source']) {
+                const select = element(id);
+                select.replaceChildren(new Option('Select a source', ''));
                 for (const source of sources) {
-                    const button =
-                        document.createElement("button");
-
-                    button.type = "button";
-                    button.textContent = source.name;
-
-                    button.addEventListener(
-                        "click",
-                        () => browseSource(source)
-                    );
-
-                    sourceListElement.appendChild(button);
+                    const key = String(source.source_id);
+                    sourcesById.set(key, source);
+                    select.add(new Option(source.name, key));
                 }
-
-                statusElement.textContent =
-                    `Enabled Sources: ${sources.length}`;
             }
-            catch (error) {
-                console.error(
-                    "Unable to load Sources.",
-                    error
-                );
-
-                statusElement.textContent =
-                    "Unable to load Sources.";
-            }
+            element('source-status').textContent = `Enabled Sources: ${sources.length}`;
+            updateButtons();
+        } catch (error) {
+            console.error('Unable to load sources.', error);
+            element('source-status').textContent = 'Unable to load sources.';
         }
+    }
 
-
-        // ----------------------------------------------------
-        // Source Browsing
-        // ----------------------------------------------------
-
-        async function browseSource(source) {
-            const statusElement =
-                document.getElementById("container-status");
-
-            const treeElement =
-                document.getElementById("container-tree");
-
-            selectedSource = source;
-
-            clearSelection();
-
-            statusElement.textContent =
-                `Loading ${source.name}...`;
-
-            treeElement.innerHTML = "";
-
-            try {
-                const result =
-                    await window.pywebview.api.browse_source(
-                        source.source_id
-                    );
-
-                renderSourceTree(
-                    result,
-                    treeElement
-                );
-
-                statusElement.textContent =
-                    `${source.name} loaded.`;
+    async function chooseInventorySource() {
+        const source = sourcesById.get(element('inventory-source').value) || null;
+        inventorySource = source;
+        inventoryScope = null;
+        const generation = ++inventoryGeneration;
+        const tree = element('inventory-tree');
+        tree.replaceChildren();
+        element('inventory-scope-note').hidden = true;
+        element('inventory-selection-status').textContent = 'No inventory scope selected.';
+        element('inventory-container-status').textContent = source ? `Loading ${source.name} containers...` : 'Select a source.';
+        updateButtons();
+        if (!source) return;
+        try {
+            const result = await window.pywebview.api.browse_source(source.source_id);
+            if (generation !== inventoryGeneration) return;
+            const allButton = document.createElement('button');
+            allButton.type = 'button';
+            allButton.textContent = 'ALL (complete source)';
+            allButton.addEventListener('click', () => chooseInventoryScope('ALL', 'ALL (complete source)'));
+            tree.appendChild(allButton);
+            if (Array.isArray(result?.roots)) {
+                const list = document.createElement('ul');
+                for (const root of result.roots) list.appendChild(createContainerNode(root, true, 'inventory'));
+                tree.appendChild(list);
+            } else {
+                const message = document.createElement('p');
+                message.textContent = 'No Source Containers returned.';
+                tree.appendChild(message);
             }
-            catch (error) {
-                console.error(
-                    "Unable to browse Source.",
-                    error
-                );
-
-                statusElement.textContent =
-                    `Unable to load ${source.name}.`;
-            }
+            chooseInventoryScope('ALL', 'ALL (complete source)');
+            element('inventory-container-status').textContent = `${source.name} containers loaded.`;
+        } catch (error) {
+            if (generation !== inventoryGeneration) return;
+            console.error('Unable to browse inventory containers.', error);
+            tree.replaceChildren();
+            element('inventory-container-status').textContent = `Unable to load ${source.name} containers.`;
         }
+        updateButtons();
+    }
 
+    function chooseInventoryScope(scope, name) {
+        inventoryScope = scope;
+        const unsupported = scope !== 'ALL';
+        element('inventory-scope-note').hidden = !unsupported;
+        element('inventory-selection-status').textContent = inventorySource
+            ? `${inventorySource.name} | ${name}`
+            : 'No inventory scope selected.';
+        updateButtons();
+    }
 
-        // ----------------------------------------------------
-        // Tree Rendering
-        // ----------------------------------------------------
-
-        function renderSourceTree(
-            result,
-            container
-        ) {
-            if (
-                !result ||
-                !Array.isArray(result.roots)
-            ) {
-                container.textContent =
-                    "No Source Containers returned.";
-
-                return;
-            }
-
-            const tree =
-                document.createElement("ul");
-
-            for (const root of result.roots) {
-                tree.appendChild(
-                    createContainerNode(
-                        root,
-                        true
-                    )
-                );
-            }
-
-            container.appendChild(tree);
+    async function refreshInventory() {
+        if (!inventorySource || inventoryScope !== 'ALL' || inventoryRunning || synchronizationRunning) return;
+        const source = inventorySource;
+        inventoryRunning = true;
+        updateButtons();
+        element('inventory-status').textContent = `Refreshing complete ${source.name} inventory...`;
+        try {
+            const result = await window.pywebview.api.refresh_container_inventory(source.source_id);
+            element('inventory-status').textContent = `${source.name} inventory refreshed. ` +
+                `Observed: ${result.observed}; New: ${result.new}; ` +
+                `Reappearing: ${result.reappearing}; Absent: ${result.absent}.`;
+            if (inventorySource?.source_id === source.source_id) await chooseInventorySource();
+            if (contentSource?.source_id === source.source_id) await chooseContentSource();
+        } catch (error) {
+            console.error('Inventory refresh failed.', error);
+            element('inventory-status').textContent = `${source.name} inventory refresh failed: ${error}`;
+        } finally {
+            inventoryRunning = false;
+            updateButtons();
         }
+    }
 
+    async function chooseContentSource() {
+        const source = sourcesById.get(element('content-source').value) || null;
+        contentSource = source;
+        selectedContainer = null;
+        const generation = ++contentGeneration;
+        const tree = element('container-tree');
+        tree.replaceChildren();
+        element('selection-status').textContent = 'No Source Container selected.';
+        element('container-status').textContent = source ? `Loading ${source.name}...` : 'Select a source.';
+        updateButtons();
+        if (!source) return;
+        try {
+            const result = await window.pywebview.api.browse_source(source.source_id);
+            if (generation !== contentGeneration) return;
+            if (!Array.isArray(result?.roots)) {
+                tree.textContent = 'No Source Containers returned.';
+            } else {
+                const list = document.createElement('ul');
+                for (const root of result.roots) list.appendChild(createContainerNode(root, true));
+                tree.appendChild(list);
+            }
+            element('container-status').textContent = `${source.name} loaded.`;
+        } catch (error) {
+            if (generation !== contentGeneration) return;
+            console.error('Unable to browse source.', error);
+            element('container-status').textContent = `Unable to load ${source.name}.`;
+        }
+    }
 
-        function createContainerNode(
-            node,
-            isRoot = false
-        ) {
-            const item =
-                document.createElement("li");
-
-            const row =
-                document.createElement("div");
-
-            const hasChildren =
-                Array.isArray(node.children) &&
-                node.children.length > 0;
-
-            let childList = null;
-
-
-            // ------------------------------------------------
-            // Expand / Collapse
-            // ------------------------------------------------
-
-            if (hasChildren) {
-                const toggleButton =
-                    document.createElement("button");
-
-                toggleButton.type = "button";
-
-                toggleButton.textContent =
-                    isRoot ? "▼" : "▶";
-
-                toggleButton.setAttribute(
-                    "aria-label",
-                    `Toggle ${node.name}`
-                );
-
-                row.appendChild(toggleButton);
-
-
-                childList =
-                    document.createElement("ul");
-
-                childList.hidden =
-                    !isRoot;
-
-                for (const child of node.children) {
-                    childList.appendChild(
-                        createContainerNode(
-                            child,
-                            false
-                        )
-                    );
+    function createContainerNode(node, isRoot = false, mode = 'content') {
+        const item = document.createElement('li');
+        const row = document.createElement('div');
+        const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+        let childList = null;
+        if (hasChildren) {
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.textContent = isRoot ? '▼' : '▶';
+            toggle.setAttribute('aria-label', `Toggle ${node.name}`);
+            childList = document.createElement('ul');
+            childList.hidden = !isRoot;
+            for (const child of node.children) childList.appendChild(createContainerNode(child, false, mode));
+            toggle.addEventListener('click', () => {
+                childList.hidden = !childList.hidden;
+                toggle.textContent = childList.hidden ? '▶' : '▼';
+            });
+            row.appendChild(toggle);
+        } else {
+            const spacer = document.createElement('span');
+            spacer.textContent = '  ';
+            row.appendChild(spacer);
+        }
+        if (mode === 'inventory' || node.selectable === true) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = node.name;
+            button.addEventListener('click', () => {
+                if (mode === 'inventory') {
+                    chooseInventoryScope(String(node.source_container_id), node.name);
+                } else {
+                    selectedContainer = node;
+                    element('selection-status').textContent = `${contentSource.name} | ${node.name}`;
+                    updateButtons();
                 }
-
-                toggleButton.addEventListener(
-                    "click",
-                    () => {
-                        childList.hidden =
-                            !childList.hidden;
-
-                        toggleButton.textContent =
-                            childList.hidden
-                                ? "▶"
-                                : "▼";
-                    }
-                );
-            }
-            else {
-                const spacer =
-                    document.createElement("span");
-
-                spacer.textContent = "  ";
-
-                row.appendChild(spacer);
-            }
-
-
-            // ------------------------------------------------
-            // Container Selection
-            // ------------------------------------------------
-
-            if (node.selectable === true) {
-                const selectButton =
-                    document.createElement("button");
-
-                selectButton.type = "button";
-                selectButton.textContent = node.name;
-
-                selectButton.addEventListener(
-                    "click",
-                    () => selectContainer(node)
-                );
-
-                row.appendChild(selectButton);
-            }
-            else {
-                const label =
-                    document.createElement("span");
-
-                label.textContent = node.name;
-
-                row.appendChild(label);
-            }
-
-
-            item.appendChild(row);
-
-            if (childList !== null) {
-                item.appendChild(childList);
-            }
-
-            return item;
+            });
+            row.appendChild(button);
+        } else {
+            const label = document.createElement('span');
+            label.textContent = node.name;
+            row.appendChild(label);
         }
+        item.appendChild(row);
+        if (childList) item.appendChild(childList);
+        return item;
+    }
 
-
-        // ----------------------------------------------------
-        // Container Selection
-        // ----------------------------------------------------
-
-        function selectContainer(container) {
-            selectedContainer = container;
-
-            const statusElement =
-                document.getElementById("selection-status");
-
-            statusElement.textContent =
-                `${selectedSource.name} | ${container.name}`;
-
-            updateSynchronizeButton();
+    async function synchronizeContent() {
+        if (!contentSource || !selectedContainer || synchronizationRunning || inventoryRunning) return;
+        const source = contentSource;
+        const container = selectedContainer;
+        synchronizationRunning = true;
+        updateButtons();
+        element('synchronization-status').textContent = `Synchronizing ${source.name} | ${container.name}...`;
+        try {
+            const result = await window.pywebview.api.synchronize(source.source_id, container.source_container_id);
+            console.log('Synchronization result:', result);
+            element('synchronization-status').textContent = `Synchronization completed: ${source.name} | ${container.name}`;
+        } catch (error) {
+            console.error('Synchronization failed.', error);
+            element('synchronization-status').textContent = `Synchronization failed: ${source.name} | ${container.name}`;
+        } finally {
+            synchronizationRunning = false;
+            updateButtons();
         }
+    }
 
-
-        function clearSelection() {
-            selectedContainer = null;
-
-            const statusElement =
-                document.getElementById("selection-status");
-
-            statusElement.textContent =
-                "No Source Container selected.";
-
-            updateSynchronizeButton();
-        }
-
-
-        function updateSynchronizeButton() {
-            const button =
-                document.getElementById(
-                    "synchronize-button"
-                );
-
-            button.disabled =
-                synchronizationRunning ||
-                selectedSource === null ||
-                selectedContainer === null;
-        }
-
-
-        // ----------------------------------------------------
-        // Synchronization
-        // ----------------------------------------------------
-
-        async function synchronizeSelectedContainer() {
-            if (
-                selectedSource === null ||
-                selectedContainer === null ||
-                synchronizationRunning
-            ) {
-                return;
-            }
-
-            const statusElement =
-                document.getElementById(
-                    "synchronization-status"
-                );
-
-            synchronizationRunning = true;
-
-            updateSynchronizeButton();
-
-            statusElement.textContent =
-                `Synchronizing ${selectedSource.name} | ` +
-                `${selectedContainer.name}...`;
-
-            try {
-                const result =
-                    await window.pywebview.api.synchronize(
-                        selectedSource.source_id,
-                        selectedContainer.source_container_id
-                    );
-
-                console.log(
-                    "Synchronization result:",
-                    result
-                );
-
-                statusElement.textContent =
-                    `Synchronization completed: ` +
-                    `${selectedSource.name} | ` +
-                    `${selectedContainer.name}`;
-            }
-            catch (error) {
-                console.error(
-                    "Synchronization failed.",
-                    error
-                );
-
-                statusElement.textContent =
-                    `Synchronization failed: ` +
-                    `${selectedSource.name} | ` +
-                    `${selectedContainer.name}`;
-            }
-            finally {
-                synchronizationRunning = false;
-
-                updateSynchronizeButton();
-            }
-        }
-
-
-        // ----------------------------------------------------
-        // Startup
-        // ----------------------------------------------------
-
-        document
-            .getElementById("synchronize-button")
-            .addEventListener(
-                "click",
-                synchronizeSelectedContainer
-            );
-
-
-        window.addEventListener(
-            "pywebviewready",
-            loadSources
-        );
-    </script>
-
+    element('inventory-source').addEventListener('change', chooseInventorySource);
+    element('content-source').addEventListener('change', chooseContentSource);
+    element('refresh-inventory-button').addEventListener('click', refreshInventory);
+    element('synchronize-button').addEventListener('click', synchronizeContent);
+    window.addEventListener('pywebviewready', loadSources);
+</script>
 </body>
-
 </html>

@@ -127,6 +127,78 @@ class KnowledgeObjectRepository:
 
         return records[0]
 
+    DISCOVERY_BATCH_SIZE = 100
+    DISCOVERY_PAGE_SIZE = 100
+
+    def find_by_source_identities(
+        self,
+        source_id: str,
+        source_object_ids,
+    ):
+        """Fetch Discovery facts for requested identities using bounded queries.
+
+        Missing identities are absent from the returned mapping. A failed or
+        incomplete request is never interpreted as evidence that a row is NEW.
+        """
+        if source_id is None or not str(source_id).strip():
+            raise ValueError("source_id is required.")
+        if source_object_ids is None:
+            raise ValueError("source_object_ids is required.")
+
+        identities = list(source_object_ids)
+        if any(value is None or not str(value).strip() for value in identities):
+            raise ValueError("Every source_object_id is required.")
+        identities = list(dict.fromkeys(identities))
+        found = {}
+
+        for start in range(0, len(identities), self.DISCOVERY_BATCH_SIZE):
+            batch = identities[start:start + self.DISCOVERY_BATCH_SIZE]
+            expected = set(batch)
+            offset = 0
+            while True:
+                try:
+                    response = (
+                        self._client.table(self.TABLE_NAME)
+                        .select(self.DISCOVERY_FIELDS + ",source_object_id")
+                        .eq("source_id", source_id)
+                        .in_("source_object_id", batch)
+                        .order("source_object_id")
+                        .order("id")
+                        .range(offset, offset + self.DISCOVERY_PAGE_SIZE - 1)
+                        .execute()
+                    )
+                except Exception as error:
+                    raise RuntimeError(
+                        "Knowledge Object repository batch lookup failed."
+                    ) from error
+
+                rows = response.data
+                if rows is None or not isinstance(rows, list):
+                    raise RuntimeError(
+                        "Knowledge Object repository batch returned invalid data."
+                    )
+                if len(rows) > self.DISCOVERY_PAGE_SIZE:
+                    raise RuntimeError(
+                        "Knowledge Object repository batch exceeded page size."
+                    )
+                for row in rows:
+                    identity = row.get("source_object_id") if isinstance(row, dict) else None
+                    if identity not in expected:
+                        raise RuntimeError(
+                            "Knowledge Object repository returned an unexpected identity."
+                        )
+                    if identity in found:
+                        raise RuntimeError(
+                            "Multiple Knowledge Objects were found for the same source identity."
+                        )
+                    found[identity] = row
+
+                if len(rows) < self.DISCOVERY_PAGE_SIZE:
+                    break
+                offset += len(rows)
+
+        return found
+
     def create(
         self,
         values: Mapping[str, Any],

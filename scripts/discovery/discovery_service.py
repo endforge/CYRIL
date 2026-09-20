@@ -104,13 +104,39 @@ class DiscoveryService:
         #
         source_ids = {}
 
-        for translator_record in (
-            translator_section.translated_records
-        ):
+        # Resolve source identities and fetch existing objects once per source.
+        # Repository failures remain stage-level failures, never NEW decisions.
+        try:
+            records = list(translator_section.translated_records)
+            requested = {}
+            for translator_record in records:
+                source_id = self._resolve_source_id(
+                    source_name=translator_record.source_name,
+                    source_ids=source_ids,
+                )
+                requested.setdefault(source_id, []).append(
+                    translator_record.source_object_id
+                )
+            existing = {
+                source_id: self._knowledge_object_repository.find_by_source_identities(
+                    source_id=source_id,
+                    source_object_ids=object_ids,
+                )
+                for source_id, object_ids in requested.items()
+            }
+        except DiscoveryError:
+            raise
+        except Exception as error:
+            raise DiscoveryError(
+                "Discovery stage encountered an unexpected failure."
+            ) from error
+
+        for translator_record in records:
             try:
                 discovery_record = self._discover_record(
                     translator_record=translator_record,
                     source_ids=source_ids,
+                    existing=existing,
                 )
 
                 discovery_section.discovery_records.append(
@@ -143,6 +169,7 @@ class DiscoveryService:
         self,
         translator_record,
         source_ids,
+        existing,
     ):
         """
         Determine synchronization state for one TranslatorRecord.
@@ -153,14 +180,8 @@ class DiscoveryService:
             source_ids=source_ids,
         )
 
-        knowledge_object = (
-            self._knowledge_object_repository
-            .find_by_source_identity(
-                source_id=source_id,
-                source_object_id=(
-                    translator_record.source_object_id
-                ),
-            )
+        knowledge_object = existing[source_id].get(
+            translator_record.source_object_id
         )
 
         discovery_record = DiscoveryRecord()
